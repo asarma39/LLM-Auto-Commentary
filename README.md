@@ -1,221 +1,279 @@
-LLM-Based Automatic Cricket Commentary Using Umpire Sensor Data
-
-This repo contains our work-in-progress implementation for an end-to-end system that:
-
-Takes wearable sensor + UWB distance data from cricket umpires.
-
-Classifies the umpire signal (e.g. boundary, wide, no-ball).
-
-(Planned) Detects events from continuous streams.
-
-(Planned) Generates natural-language cricket commentary using an LLM.
-
-Right now, we’ve built a clean data pipeline + a first baseline classifier that gets decent performance and is easy to extend.
-
-What’s Implemented So Far
-1. ViSig Data Loader
-
-File: src/data_loading/load_visig.py
-
-Capabilities:
-
-Loads all .mat files containing umpire signal trials.
-
-Parses:
-
-acc_mat – accelerometer data
-
-gyro_mat – gyroscope data
-
-dist_mat – pairwise UWB distances between sensor nodes
-
-rawt – timestamps
-
-Normalizes shapes and converts everything to time-major format.
-
-Extracts:
-
-label (e.g. boundary4, wide, out, etc.)
-
-participant_id from filename suffix (e.g. _1, _2, …).
-
-Provides:
-
-ViSigSample dataclass to hold one trial.
-
-load_visig_mat(...) to load a single file.
-
-load_visig_dataset(...) to load all .mat files under a directory.
-
-get_label_distribution(...) for quick label counts.
-
-to_flat_sequence(...) to convert each trial into a (T, F) matrix.
-
-Current notes:
-
-We’ve validated on our dataset:
-
-80 samples
-
-10 labels (boundary4, boundary6, cancelcall, deadball, legbye, noball, out, penaltyrun, shortrun, wide)
-
-Balanced: 8 samples per class
-
-Each sample is a multivariate time series:
-
-T timesteps (varies per sample)
-
-F = 195 features per timestep:
-
-90 from acc_mat
-
-90 from gyro_mat
-
-15 from upper-triangular dist_mat
-
-2. PyTorch Dataset Wrapper
-
-File: src/data_loading/cricket_dataset.py
-
-Capabilities:
-
-build_label_mapping(...)
-
-Deterministic label → index mapping (sorted lexicographically).
-
-CricketSignalsDataset
-
-Wraps a list of ViSigSample into something you can feed to PyTorch.
-
-Uses to_flat_sequence(...) internally.
-
-Outputs:
-
-x: tensor of shape (max_len, feature_dim)
-
-Center-cropped if sequence is longer than max_len
-
-Padded with pad_value at the end if shorter
-
-y: scalar class index
-
-Exposes:
-
-num_classes
-
-feature_dim (inferred from data)
-
-create_cricket_datasets(...)
-
-Loads all samples from a given root.
-
-Builds a shared label mapping.
-
-Creates one CricketSignalsDataset and splits into:
-
-train / val / test via random_split (70% / 15% / 15% by default).
-
-This gives us a single source of truth for model-ready data.
-
-3. Baseline Sequence Classifier (1D CNN)
-
-Files:
-
-src/models/seq_cnn.py
-
-src/training/train_seq_classifier.py
-
-Key ideas:
-
-We treat each signal as a time series, not an image.
-
-We use a 1D CNN over time:
-
-Input: (batch, seq_len, feature_dim)
-
-Conv1d over time dimension to learn local temporal patterns.
-
-Global max pooling over time for shift invariance.
-
-Linear layer → class logits.
-
-Reasoning:
-
-Small dataset (~80 sequences) → need a simple, low-parameter model.
-
-1D CNNs are standard for multivariate time-series classification.
-
-This is an intentional, interpretable baseline, not the final architecture.
-
-train_seq_classifier.py:
-
-Loads data using create_cricket_datasets.
-
-Builds SimpleCricketCNN with:
-
-input_dim = feature_dim
-
-num_classes = dataset.num_classes
-
-Trains with:
-
-Adam (lr = 1e-3 default)
-
-Cross-entropy loss
-
-Early stopping on validation accuracy
-
-Saves best checkpoint to:
-
-models/checkpoints/visig_simple_cnn.pt
-
-Prints:
-
-train/val metrics per epoch
-
-final test accuracy
-
-We’ve seen ~60–70% test accuracy with a 2-layer CNN on this tiny dataset, which is a solid sanity-checked baseline (random would be 10%).
-
-Data Format (For Everyone’s Intuition)
-
-Each .mat file ≈ one labeled umpire gesture.
-
-Inside:
-
-acc_mat: (6, 15, N)
-
-gyro_mat: (6, 15, N)
-
-dist_mat: (6, 6, N)
-
-rawt: (N,)
+<div align="center">
+
+# 🏏 LLM‑Based Automatic Cricket Commentary  
+Using Umpire Wearable Sensor + UWB Distance Data
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-F37626?logo=jupyter&logoColor=white)](notebooks/train_cricket_classifier.ipynb)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-WIP-orange)](#-roadmap)
+
+<br/>
+<i>From raw multisensor umpire signals ➜ event classification ➜ (planned) natural‑language commentary.</i>
+
+</div>
+
+---
+
+## ✨ What This Project Does
+- **Ingests** wearable IMU + UWB distance data from cricket umpires  
+- **Classifies** the signal label (e.g., boundary, wide, no‑ball) with a simple 1D CNN baseline  
+- **Planned**: detect events in continuous streams and **generate commentary** via an LLM  
+
+We’ve built a clean data pipeline and a first baseline classifier with solid sanity‑check performance and low complexity.
+
+---
+
+## 🗂️ Table of Contents
+- [✨ What This Project Does](#-what-this-project-does)
+- [📦 What’s Implemented So Far](#-whats-implemented-so-far)
+- [📊 Data Format (Quick Intuition)](#-data-format-quick-intuition)
+- [🧪 Quickstart](#-quickstart)
+- [🧱 Model Overview](#-model-overview)
+- [📈 Results Snapshot](#-results-snapshot)
+- [🏗️ Suggested Repository Layout](#️-suggested-repository-layout)
+- [🗺️ Roadmap](#️-roadmap)
+
+---
+
+## 📦 What’s Implemented So Far
+
+### 1) ViSig Data Loader
+File: `src/data_loading/load_visig.py`
+
+**Capabilities**
+- Loads all `.mat` files containing umpire signal trials  
+- Parses:
+  - `acc_mat` – accelerometer data  
+  - `gyro_mat` – gyroscope data  
+  - `dist_mat` – pairwise UWB distances between sensor nodes  
+  - `rawt` – timestamps  
+- Normalizes shapes and converts to time‑major format  
+- Extracts:
+  - `label` (e.g., boundary4, wide, out, etc.)  
+  - `participant_id` from filename suffix (e.g., `_1`, `_2`, …)  
+- Provides:
+  - `ViSigSample` dataclass to hold one trial  
+  - `load_visig_mat(...)` to load a single file  
+  - `load_visig_dataset(...)` to load all `.mat` under a directory  
+  - `get_label_distribution(...)` for quick label counts  
+  - `to_flat_sequence(...)` to convert each trial into a `(T, F)` matrix  
+
+**Current notes (validated on our dataset)**
+- Samples: **80**  
+- Labels: **10** (`boundary4`, `boundary6`, `cancelcall`, `deadball`, `legbye`, `noball`, `out`, `penaltyrun`, `shortrun`, `wide`)  
+- Balanced: **8 samples per class**  
+- Each sample is a multivariate time series with feature dimension **F = 195**  
+  - 90 from `acc_mat`, 90 from `gyro_mat`, 15 from upper‑triangular `dist_mat`
+
+---
+
+### 2) PyTorch Dataset Wrapper
+File: `src/data_loading/cricket_dataset.py`
+
+**Capabilities**
+- `build_label_mapping(...)`: deterministic label→index mapping (lexicographically sorted)  
+- `CricketSignalsDataset`: wraps a list of `ViSigSample` for PyTorch
+  - Internally uses `to_flat_sequence(...)`
+  - Outputs:
+    - `x`: tensor of shape `(max_len, feature_dim)`
+      - Center‑cropped if longer than `max_len`
+      - Padded at the end with `pad_value` if shorter
+    - `y`: scalar class index
+  - Exposes: `num_classes`, `feature_dim`  
+- `create_cricket_datasets(...)`: loads all samples, builds a shared label mapping, and splits into train/val/test via `random_split` (70% / 15% / 15% by default)
+
+---
+
+### 3) Baseline Sequence Classifier (1D CNN)
+Files:  
+`src/models/seq_cnn.py`  
+`src/training/train_seq_classifier.py`
+
+**Key ideas**
+- Treat each signal as a time series (not an image)  
+- 1D CNN over time:
+  - Input: `(batch, seq_len, feature_dim)`
+  - `Conv1d` over time to learn local temporal patterns
+  - Global max pooling over time for shift invariance
+  - Linear layer → class logits
+
+**Reasoning**
+- Small dataset (~80 sequences) → prefer simple, low‑parameter model  
+- 1D CNNs are standard for multivariate time‑series classification  
+- Intentional, interpretable baseline (not the final architecture)
+
+**Training script**
+- Loads data via `create_cricket_datasets`
+- Builds `SimpleCricketCNN` with:
+  - `input_dim = feature_dim`
+  - `num_classes = dataset.num_classes`
+- Optimizer/Loss/Early‑stopping:
+  - Adam (lr = 1e‑3 default)
+  - Cross‑entropy
+  - Early stopping on validation accuracy
+- Saves best checkpoint to `models/checkpoints/visig_simple_cnn.pt`
+- Logs train/val metrics per epoch and final test accuracy
+
+---
+
+## 📊 Data Format (Quick Intuition)
+
+Each `.mat` file ≈ one labeled umpire gesture.
+
+Inside (original shapes):
+- `acc_mat`: `(6, 15, N)`
+- `gyro_mat`: `(6, 15, N)`
+- `dist_mat`: `(6, 6, N)`
+- `rawt`: `(N,)`
 
 Where:
+- `6` = number of sensor nodes  
+- `15` = 5 consecutive IMU readings × 3 axes (pre‑grouped)  
+- `N` = timesteps in this trial  
 
-6 = number of sensor nodes
-
-15 = 5 consecutive IMU readings × 3 axes (pre-grouped)
-
-N = timesteps in this trial
-
-We convert to:
-
+Converted:
+```
 ViSigSample:
-    acc  -> (T, 6, 15)
-    gyro -> (T, 6, 15)
-    dist -> (T, 6, 6)
-    t    -> (T,)
+  acc  -> (T, 6, 15)
+  gyro -> (T, 6, 15)
+  dist -> (T, 6, 6)
+  t    -> (T,)
+```
 
-
-Then to_flat_sequence(sample) → (T, 195).
-
+Then `to_flat_sequence(sample)` → `(T, 195)`  
 From there, models only see a clean multivariate sequence.
 
-Repository Structure (Suggested)
+> Snapshot
+>
+> - Sequences: 80 • Classes: 10 • Feature dim: 195  
+> - Balanced: 8 samples per class
 
-If not already, we’re organizing as:
+<details>
+  <summary>📷 Signal reference (cricket)</summary>
 
+  <p align="center">
+    <img src="visig_body_signal_data/signal_codebooks/cricket.jpg" alt="Cricket signal reference" width="600"/>
+  </p>
+</details>
+
+---
+
+## 🧪 Quickstart
+
+### Option A) Run in Jupyter Notebook (recommended for exploration)
+- Activate your environment and set `VISIG_ROOT` (see steps below)
+- Launch Jupyter and open the notebook:
+  ```bash
+  jupyter lab  # or: jupyter notebook
+  ```
+  Then open: `notebooks/train_cricket_classifier.ipynb`
+- Run all cells to:
+  - Load and summarize the dataset
+  - Build train/val/test splits
+  - Train the baseline 1D‑CNN and view metrics
+- Tweak hyperparameters in the top “Config” cell (`max_len`, `batch_size`, `lr`, `num_epochs`, etc.)
+
+### 1) Environment
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Minimal requirements (if `requirements.txt` is missing):
+```
+numpy
+scipy
+torch
+torchvision
+torchaudio
+tqdm
+```
+
+### 2) Point to the data
+We use `VISIG_ROOT` so paths aren’t hardcoded.
+```bash
+export VISIG_ROOT="/path/to/visig/data/cricket"
+```
+Or in `.env`:
+```
+VISIG_ROOT=/path/to/visig/data/cricket
+```
+Each `.mat` file should live somewhere under this directory.
+
+### 3) Sanity check: loader
+```bash
+python -m src.data_loading.load_visig
+```
+What it prints:
+- number of samples
+- label distribution
+- shapes for the first sample
+
+### 4) Create datasets & inspect shapes
+```bash
+python -m src.data_loading.cricket_dataset
+```
+What it prints:
+- split sizes
+- example `x` shape (should be `(max_len, feature_dim)`)
+- example label index
+
+### 5) Train the baseline CNN
+```bash
+python -m src.training.train_seq_classifier
+```
+Defaults:
+- `max_len = 400`
+- `batch_size = 8`
+- `lr = 1e-3`
+- `num_epochs = 50`
+- `patience = 8`
+
+During training you’ll see logs like:
+```
+Using device: cuda
+Input dim: 195, num_classes: 10
+Dataset sizes -> train: 56, val: 12, test: 12
+Epoch 001: train_loss=..., val_acc=..., best_val_acc=...
+...
+Saved best model to models/checkpoints/visig_simple_cnn.pt
+Test accuracy: 0.67
+```
+
+---
+
+## 🧱 Model Overview
+
+| Component | Purpose |
+|---|---|
+| 1D CNN over time | Learn local temporal patterns |
+| Global max pool | Shift invariance across time |
+| Linear classifier | Map pooled features to class logits |
+| Early stopping | Prevent overfitting on small dataset |
+
+> Why 1D CNN?  
+> Simple, data‑efficient, and standard for multivariate time‑series classification — a strong baseline before heavier models.
+
+---
+
+## 📈 Results Snapshot
+- Test accuracy typically: **~60–70%** with a 2‑layer CNN on this tiny dataset  
+- Sanity check: random baseline would be **~10%**
+
+If you see ~0.1 accuracy, re‑check:
+- `VISIG_ROOT` path
+- tensor shapes
+- label mapping consistency
+
+---
+
+## 🏗️ Suggested Repository Layout
+
+```
 project-root/
   README.md
   .env                         # optional, can store VISIG_ROOT here
@@ -237,164 +295,19 @@ project-root/
     00_eda.ipynb               # lengths, label dist, sanity plots, etc.
   data/
     # (we do NOT commit .mat here; stored locally)
+```
+
+---
+
+## 🗺️ Roadmap
+- ✅ Clean ingestion of `.mat` files into a typed Python representation  
+- ✅ Standardized `(T, F)` feature representation for each trial  
+- ✅ PyTorch `Dataset` + random train/val/test splitting  
+- ✅ Simple, well‑structured 1D CNN baseline with early stopping  
+- ✅ Verified that the sensor data is predictive of the signal labels  
+- ⏭️ Better evaluation (confusion matrix)  
+- ⏭️ Subject‑wise splits (train on some umpires, test on others)  
+- ⏭️ Continuous stream simulation (concatenate trials + idle; sliding window + classifier)  
+- ⏭️ LLM‑based commentary generation (templates as robust fallback)  
+- ⏭️ End‑to‑end demo: “Given this sensor stream, show detected events + auto‑generated commentary.”
 
-Setup Instructions
-1. Clone & create environment
-git clone <repo-url>
-cd <repo-name>
-
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-pip install --upgrade pip
-pip install -r requirements.txt
-
-
-If requirements.txt doesn’t exist yet, minimal set:
-
-numpy
-scipy
-torch
-torchvision
-torchaudio
-tqdm
-
-
-(LLM + commentary dependencies can be added later.)
-
-2. Point to the data
-
-We use an environment variable VISIG_ROOT so paths aren’t hardcoded.
-
-Example:
-
-export VISIG_ROOT="/path/to/visig/data/cricket"
-
-
-or add to .env:
-
-VISIG_ROOT=/path/to/visig/data/cricket
-
-
-Each .mat file should live somewhere under this directory.
-
-How to Run Things
-1. Quick sanity check: loader
-
-From project root:
-
-export VISIG_ROOT="/path/to/visig/data/cricket"
-
-python -m src.data_loading.load_visig
-
-
-What it does:
-
-Loads all .mat files.
-
-Prints:
-
-number of samples
-
-label distribution
-
-shapes for the first sample
-
-If that looks reasonable, you’re good.
-
-2. Create datasets & inspect shapes
-python -m src.data_loading.cricket_dataset
-
-
-What it does:
-
-Uses VISIG_ROOT.
-
-Builds train/val/test splits.
-
-Prints:
-
-split sizes
-
-example x shape (should be (max_len, feature_dim))
-
-example label index.
-
-3. Train the baseline CNN
-python -m src.training.train_seq_classifier
-
-
-Requirements:
-
-VISIG_ROOT set.
-
-Runs with defaults:
-
-max_len = 400
-
-batch_size = 8
-
-lr = 1e-3
-
-num_epochs = 50
-
-patience = 8
-
-During training, you’ll see logs like:
-
-Using device: cuda
-Input dim: 195, num_classes: 10
-Dataset sizes -> train: 56, val: 12, test: 12
-Epoch 001: train_loss=..., val_acc=..., best_val_acc=...
-...
-Saved best model to models/checkpoints/visig_simple_cnn.pt
-Test accuracy: 0.67
-
-
-Interpretation:
-
-If test accuracy ~0.6–0.7:
-
-Baseline working.
-
-If test accuracy ~0.1:
-
-Something’s wrong (check VISIG_ROOT, shapes, labels).
-
-How This Fits the Bigger Project
-
-Right now we’ve completed:
-
-✅ Clean ingestion of .mat files into a typed Python representation.
-
-✅ Standardized (T, F) feature representation for each trial.
-
-✅ PyTorch Dataset + random train/val/test splitting.
-
-✅ Simple, well-structured 1D CNN baseline with early stopping.
-
-✅ Verified that the sensor data is predictive of the signal labels.
-
-Next major milestones (for us / for teammates):
-
-Better evaluation
-
-Confusion matrix.
-
-Subject-wise splits (train on some umpires, test on others).
-
-Continuous stream simulation
-
-Concatenate multiple trials + idle.
-
-Sliding window + classifier → event detection.
-
-LLM-based commentary generation
-
-Map detected events to short commentary lines.
-
-Add simple templates as a fallback (to keep it robust).
-
-End-to-end demo
-
-“Given this sensor stream, show detected events + auto-generated commentary.”
