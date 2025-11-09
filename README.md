@@ -271,6 +271,83 @@ If you see ~0.1 accuracy, re‑check:
 
 ---
 
+## 🔬 Evaluation & Windowed Training (New)
+
+- We now support training/evaluation on fixed‑length windows with optional preprocessing:
+  - Windowing: `use_windows=True`, `window_size=32`, `stride=8`
+  - Preprocessing flags: `standardize`, `imu_zero_offset`, `lowpass_k=5`, `uwb_correct`
+- Splits:
+  - Random/stratified trial‑level split (so every class appears in each split).
+  - LOPO (Leave‑One‑Participant‑Out) using `participant_id` from filenames.
+- Metrics:
+  - Window‑level: each `(W,F)` slice is scored → good for diagnostics.
+  - Trial‑level: aggregate window probabilities per trial → main accuracy for gesture classification.
+
+### How to run from the notebook
+- Set these in `HYPERPARAMS` and run the existing training cell:
+  - `use_windows=True`, `window_size=32`, `stride=8`
+  - `standardize=True`, `imu_zero_offset=True`, `lowpass_k=5`, `uwb_correct=True`
+  - `stratified_split=True`
+- The training cell prints both window‑ and trial‑level results for the test split.
+
+### LOPO (CLI, recommended for full eval)
+
+```bash
+python -m src.eval.run_eval \
+  --data-root "$VISIG_ROOT" \
+  --protocol lopo \
+  --model lstm \
+  --batch-size 32 --window-size 32 --stride 8 \
+  --standardize --imu-zero-offset --lowpass-k 5 --uwb-correct \
+  --num-epochs 40 --patience 8
+```
+
+- Outputs JSON summaries under `results/<timestamp>/`.
+- Saves per‑fold checkpoints to `results/<timestamp>/lopo_pid_<PID>/checkpoint_lstm.pt` and the fitted scaler when used.
+
+> Note on metrics
+>
+> - Window‑level accuracy counts windows (longer trials yield more windows).
+> - Trial‑level aggregates windows per trial (one prediction per gesture) and is the primary headline number.
+
+---
+
+## ✅ Current Results
+
+### LOPO (Leave‑One‑Participant‑Out)
+
+pid  test_acc  window_acc  trial_acc  
+1    0.941     0.941       1.000  
+2    0.928     0.928       1.000  
+3    1.000     1.000       1.000  
+4    0.962     0.962       1.000  
+5    0.991     0.991       1.000  
+6    0.995     0.995       1.000  
+7    0.985     0.985       1.000  
+8    0.967     0.967       1.000  
+
+Summary (mean ± std):
+- **Test Acc**: 0.969 ± 0.024 (n=8)
+- **Window Acc**: 0.969 ± 0.024 (n=8)
+- **Trial Acc**: 1.000 ± 0.000 (n=8)
+
+### Stratified split (no LOPO) – Per‑class (Window‑level)
+
+- boundary4: 0.968 (30/31)  
+- boundary6: 1.000 (38/38)  
+- cancelcall: 1.000 (32/32)  
+- deadball: 1.000 (32/32)  
+- legbye: 1.000 (38/38)  
+- noball: 0.757 (28/37)  
+- out: 0.946 (35/37)  
+- penaltyrun: 1.000 (35/35)  
+- shortrun: 0.765 (26/34)  
+- wide: 1.000 (34/34)  
+
+Overall window‑level accuracy: **0.943**
+
+---
+
 ## 🏗️ Suggested Repository Layout
 
 ```

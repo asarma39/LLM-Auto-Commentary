@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable, Union
+from collections import defaultdict
+import random
 
 import numpy as np
 import torch
@@ -248,6 +250,107 @@ def create_cricket_datasets(
     g = torch.Generator().manual_seed(seed)
     train_ds, val_ds, test_ds = random_split(
         full_ds, [n_train, n_val, n_test], generator=g
+    )
+
+    return train_ds, val_ds, test_ds
+
+
+def stratified_trial_split(
+    samples: List[ViSigSample],
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    seed: int = 42,
+) -> Tuple[List[ViSigSample], List[ViSigSample], List[ViSigSample]]:
+    """
+    Split samples into train/val/test in a label-stratified way at the TRIAL level.
+    Ensures each label appears in all splits when possible.
+    """
+    if not samples:
+        raise ValueError("No samples provided for stratified split.")
+
+    by_label: Dict[str, List[ViSigSample]] = defaultdict(list)
+    for s in samples:
+        by_label[s.label].append(s)
+
+    rng = random.Random(seed)
+    train: List[ViSigSample] = []
+    val: List[ViSigSample] = []
+    test: List[ViSigSample] = []
+
+    for label, group in by_label.items():
+        if len(group) < 3:
+            raise ValueError(f"Not enough trials for label '{label}' to stratify: {len(group)} found.")
+
+        rng.shuffle(group)
+        n = len(group)
+        n_train = max(1, int(round(n * train_ratio)))
+        n_val = max(1, int(round(n * val_ratio)))
+        if n_train + n_val >= n:
+            n_train = max(1, n_train - 1)
+            n_val = max(1, n_val - 1)
+        n_test = n - n_train - n_val
+        if n_test <= 0:
+            n_test = 1
+            if n_train > 1:
+                n_train -= 1
+            elif n_val > 1:
+                n_val -= 1
+
+        train.extend(group[:n_train])
+        val.extend(group[n_train:n_train + n_val])
+        test.extend(group[n_train + n_val:])
+
+    train.sort(key=lambda s: s.file_path)
+    val.sort(key=lambda s: s.file_path)
+    test.sort(key=lambda s: s.file_path)
+    return train, val, test
+
+
+def create_cricket_datasets_stratified(
+    root: Union[str, Path],
+    pattern: str = "*.mat",
+    allowed_labels: Optional[Iterable[str]] = None,
+    max_len: int = 400,
+    use_upper_tri_dist: bool = True,
+    pad_value: float = 0.0,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    seed: int = 42,
+) -> Tuple[CricketSignalsDataset, CricketSignalsDataset, CricketSignalsDataset]:
+    """
+    Label-stratified variant of create_cricket_datasets.
+    Ensures each class has representation in train/val/test.
+    """
+    samples = load_visig_dataset(root, pattern=pattern, allowed_labels=allowed_labels)
+    if not samples:
+        raise RuntimeError(f"No samples loaded from {root}")
+
+    train_samples, val_samples, test_samples = stratified_trial_split(
+        samples, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed
+    )
+
+    label_to_idx = build_label_mapping(samples)
+
+    train_ds = CricketSignalsDataset(
+        samples=train_samples,
+        label_to_idx=label_to_idx,
+        max_len=max_len,
+        use_upper_tri_dist=use_upper_tri_dist,
+        pad_value=pad_value,
+    )
+    val_ds = CricketSignalsDataset(
+        samples=val_samples,
+        label_to_idx=label_to_idx,
+        max_len=max_len,
+        use_upper_tri_dist=use_upper_tri_dist,
+        pad_value=pad_value,
+    )
+    test_ds = CricketSignalsDataset(
+        samples=test_samples,
+        label_to_idx=label_to_idx,
+        max_len=max_len,
+        use_upper_tri_dist=use_upper_tri_dist,
+        pad_value=pad_value,
     )
 
     return train_ds, val_ds, test_ds
