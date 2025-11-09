@@ -118,6 +118,23 @@ Files:
 
 ---
 
+### 4) LSTM Sequence Classifier (New)
+Files:  
+`src/models/seq_lstm.py`  
+`src/training/train_seq_classifier.py`
+
+**Key ideas**
+- Input `(B, T, F)` → `nn.LSTM(batch_first=True)` → masked/pooled over valid timesteps (ignores padding) → MLP head → logits.
+- Shines with windowed training (short fixed‑length segments).
+
+**What’s implemented**
+- `SimpleCricketLSTM(input_dim, num_classes, hidden_size=128, num_layers=1, dropout=0.2, head_hidden=128)`.
+- Masked max‑pooling over time (no reliance on padded timesteps).
+- Selectable via `--model lstm` (default remains `cnn`).
+- Optional loss mixing: `--loss ce+onehot_mse` (default `ce`).
+
+---
+
 ## 📊 Data Format (Quick Intuition)
 
 Each `.mat` file ≈ one labeled umpire gesture.
@@ -276,6 +293,11 @@ If you see ~0.1 accuracy, re‑check:
 - We now support training/evaluation on fixed‑length windows with optional preprocessing:
   - Windowing: `use_windows=True`, `window_size=32`, `stride=8`
   - Preprocessing flags: `standardize`, `imu_zero_offset`, `lowpass_k=5`, `uwb_correct`
+- Preprocessing transforms (`src/data_processing/preprocess.py`):
+  - `StandardizeFeatures`: fit per‑feature mean/std on train windows; saved to `models/checkpoints/scaler_windowed.pt` (and under `results/...` when using the eval runner).
+  - `IMUZeroOffset`: subtract per‑window mean on acc+gyro channels.
+  - `LowPassSmooth(k)`: moving‑average smoothing on IMU channels (k odd).
+  - `UWBCorrectStaticClamp`: when accel variance is low, clamp UWB spikes to robust caps.
 - Splits:
   - Random/stratified trial‑level split (so every class appears in each split).
   - LOPO (Leave‑One‑Participant‑Out) using `participant_id` from filenames.
@@ -283,12 +305,29 @@ If you see ~0.1 accuracy, re‑check:
   - Window‑level: each `(W,F)` slice is scored → good for diagnostics.
   - Trial‑level: aggregate window probabilities per trial → main accuracy for gesture classification.
 
+### Windowed dataset (New)
+- `src/data_loading/windowed_cricket_dataset.py` generates overlapping windows from each trial after the split.
+- Exposes:
+  - `window_to_trial`: maps each window to its originating trial index.
+  - `trial_labels`: per‑trial true labels.
+- Enables trial‑level aggregation from window predictions.
+
 ### How to run from the notebook
 - Set these in `HYPERPARAMS` and run the existing training cell:
   - `use_windows=True`, `window_size=32`, `stride=8`
   - `standardize=True`, `imu_zero_offset=True`, `lowpass_k=5`, `uwb_correct=True`
   - `stratified_split=True`
 - The training cell prints both window‑ and trial‑level results for the test split.
+
+### Training script flags (New)
+The training entrypoint supports:
+- Model/Loss: `--model {cnn,lstm}`, `--loss {ce,ce+onehot_mse}`, `--mse-weight`
+- Windowing: `--use-windows`, `--window-size`, `--stride`
+- Preprocessing: `--standardize`, `--imu-zero-offset`, `--lowpass-k`, `--uwb-correct`
+- Splits: `--stratified-split` (label‑stratified trials). LOPO via the eval runner below.
+- Checkpoints:
+  - Notebook/regular runs: `models/checkpoints/visig_simple_{model}.pt`
+  - Eval runner: per‑fold checkpoints and scaler saved under `results/...`
 
 ### LOPO (CLI, recommended for full eval)
 
@@ -304,6 +343,18 @@ python -m src.eval.run_eval \
 
 - Outputs JSON summaries under `results/<timestamp>/`.
 - Saves per‑fold checkpoints to `results/<timestamp>/lopo_pid_<PID>/checkpoint_lstm.pt` and the fitted scaler when used.
+
+Random/stratified evaluation is also supported:
+
+```bash
+python -m src.eval.run_eval \
+  --data-root "$VISIG_ROOT" \
+  --protocol random \
+  --model lstm \
+  --batch-size 32 --window-size 32 --stride 8 \
+  --standardize --imu-zero-offset --lowpass-k 5 --uwb-correct \
+  --num-epochs 40 --patience 8
+```
 
 > Note on metrics
 >
