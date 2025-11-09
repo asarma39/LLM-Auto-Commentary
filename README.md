@@ -430,12 +430,18 @@ project-root/
 ## 🗺️ Roadmap
 - ✅ Clean ingestion of `.mat` files into a typed Python representation  
 - ✅ Standardized `(T, F)` feature representation for each trial  
-- ✅ PyTorch `Dataset` + random train/val/test splitting  
-- ✅ Simple, well‑structured 1D CNN baseline with early stopping  
+- ✅ PyTorch `Dataset` + random/stratified trial‑level splitting  
+- ✅ Simple 1D CNN baseline with early stopping  
+- ✅ LSTM classifier with masked pooling (windowed training)  
+- ✅ Windowed dataset and preprocessing (standardize, IMU zero‑offset, low‑pass, UWB clamp)  
+- ✅ Trial‑level aggregation from windows (window → trial mapping)  
+- ✅ LOPO evaluation protocol (per‑participant)  
+- ✅ Evaluation runner CLI with saved checkpoints/scalers and JSON summaries  
 - ✅ Verified that the sensor data is predictive of the signal labels  
-- ⏭️ Better evaluation (confusion matrix)  
-- ⏭️ Subject‑wise splits (train on some umpires, test on others)  
-- ⏭️ Continuous stream simulation (concatenate trials + idle; sliding window + classifier)  
+- ⏭️ Continuous stream simulation (concatenate trials + idle; sliding window + detector)  
+- ⏭️ Sensor fusion variant (two‑branch IMU+UWB) and ablations  
+- ⏭️ Augmentation tuning and robustness analysis  
+- ⏭️ Unify standalone tester with windowed/preprocessing flags  
 - ⏭️ LLM‑based commentary generation (templates as robust fallback)  
 - ⏭️ End‑to‑end demo: “Given this sensor stream, show detected events + auto‑generated commentary.”
 
